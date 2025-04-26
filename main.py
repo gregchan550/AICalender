@@ -7,6 +7,7 @@ from dateutil import parser
 import json
 import logging
 import pytz
+from typing import Optional
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +22,7 @@ YOUR_EMAIL = "gregchan550@gmail.com"
 class ReminderRequest(BaseModel):
     title: str
     due_date: str  # ISO format date string
+    end_date: Optional[str] = None  # Optional end time
 
 def get_calendar_service():
     """Create and return Google Calendar service instance."""
@@ -47,16 +49,40 @@ def get_calendar_service():
         logger.error(f"Failed to initialize calendar service: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to initialize calendar service: {str(e)}")
 
+@app.get("/events")
+async def get_events(start: str, end: str):
+    """Get calendar events for a specific time range."""
+    try:
+        service = get_calendar_service()
+        
+        events_result = service.events().list(
+            calendarId=YOUR_EMAIL,
+            timeMin=start,
+            timeMax=end,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        return events
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch events: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch events: {str(e)}")
+
 @app.post("/reminder")
 async def create_reminder(reminder: ReminderRequest):
     try:
         logger.info(f"Creating reminder: {reminder.title} for {reminder.due_date}")
         # Parse the due date
-        due_date = parser.parse(reminder.due_date)
+        start_time = parser.parse(reminder.due_date)
+        end_time = parser.parse(reminder.end_date) if reminder.end_date else start_time
+        
         # Convert to Brisbane timezone
         brisbane_tz = pytz.timezone('Australia/Brisbane')
-        due_date = due_date.astimezone(brisbane_tz)
-        logger.info(f"Parsed due date (Brisbane time): {due_date}")
+        start_time = start_time.astimezone(brisbane_tz)
+        end_time = end_time.astimezone(brisbane_tz)
+        logger.info(f"Parsed time range (Brisbane time): {start_time} - {end_time}")
         
         # Create calendar service
         service = get_calendar_service()
@@ -65,11 +91,11 @@ async def create_reminder(reminder: ReminderRequest):
         event = {
             'summary': reminder.title,
             'start': {
-                'dateTime': due_date.isoformat(),
+                'dateTime': start_time.isoformat(),
                 'timeZone': 'Australia/Brisbane',
             },
             'end': {
-                'dateTime': due_date.isoformat(),
+                'dateTime': end_time.isoformat(),
                 'timeZone': 'Australia/Brisbane',
             },
         }
